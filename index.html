@@ -114,7 +114,8 @@
   .plots { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 26px; }
   figure { margin: 0; min-width: 0; }
   figure h2 { margin: 0 0 4px; font-size: calc(1.05rem + 1px); font-weight: 600; }
-  svg { width: 100%; height: 260px; display: block; overflow: visible; touch-action: none; }
+  svg { width: 100%; height: 260px; display: block; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; }
+  html.dragging, html.dragging * { user-select: none; -webkit-user-select: none; }
   figcaption { display: flex; flex-wrap: wrap; gap: 8px 14px; min-height: 1.2em; margin-top: 4px; font-size: calc(0.78rem + 1px); color: var(--muted); }
   .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: -1px; }
   @media (max-width: 980px) {
@@ -711,13 +712,25 @@ function bindPriorDrag(figure) {
     const local = svgPoint(svg, event);
     if (local.x < scale.left || local.x > scale.left + scale.width) return;
     if (local.y < scale.top || local.y > scale.top + scale.height) return;
+    event.preventDefault();
+    document.documentElement.classList.add("dragging");
+    window.getSelection().removeAllRanges();
     setPrior(scale.invert(local.x));
     try { svg.setPointerCapture(event.pointerId); } catch (error) { /* pointer already released */ }
   });
   svg.addEventListener("pointermove", (event) => {
     if (!svg.hasPointerCapture(event.pointerId) || !figure._priorScale) return;
+    event.preventDefault();
+    window.getSelection().removeAllRanges();
     setPrior(figure._priorScale.invert(svgPoint(svg, event).x));
   });
+  const endDrag = () => {
+    document.documentElement.classList.remove("dragging");
+    window.getSelection().removeAllRanges();
+  };
+  svg.addEventListener("pointerup", endDrag);
+  svg.addEventListener("pointercancel", endDrag);
+  svg.addEventListener("selectstart", (event) => event.preventDefault());
 }
 
 function padded(values, includeZero) {
