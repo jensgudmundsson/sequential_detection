@@ -83,11 +83,11 @@ function compileDetection(source, agent) {
   }
   let raw;
   try {
-    raw = Function("x", "exp", "log", "sqrt", "sin", "cos", "abs", "pi", "E", `"use strict"; return (${text});`);
+    raw = Function("x", "exp", "log", "sqrt", "sin", "cos", "abs", "min", "pi", "E", `"use strict"; return (${text});`);
   } catch (error) {
     throw new Error(`agent ${agent}: ${error.message}`);
   }
-  const call = (x) => raw(x, Math.exp, Math.log, Math.sqrt, Math.sin, Math.cos, Math.abs, Math.PI, Math.E);
+  const call = (x) => raw(x, Math.exp, Math.log, Math.sqrt, Math.sin, Math.cos, Math.abs, Math.min, Math.PI, Math.E);
   function p(x) {
     const value = call(x);
     if (typeof value === "function") return value(x);
