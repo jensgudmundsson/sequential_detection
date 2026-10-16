@@ -114,7 +114,7 @@
   .plots { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 26px; }
   figure { margin: 0; min-width: 0; }
   figure h2 { margin: 0 0 4px; font-size: calc(1.05rem + 1px); font-weight: 600; }
-  svg { width: 100%; height: 260px; display: block; overflow: visible; }
+  svg { width: 100%; height: 260px; display: block; overflow: visible; touch-action: none; }
   figcaption { display: flex; flex-wrap: wrap; gap: 8px 14px; min-height: 1.2em; margin-top: 4px; font-size: calc(0.78rem + 1px); color: var(--muted); }
   .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: -1px; }
   @media (max-width: 980px) {
@@ -239,6 +239,7 @@ function refreshPoint() {
     lastPoint = data;
     setStatus(data.warning || "", false);
     renderPoint(data);
+    if (activeTab === "plots") renderPlots();
   } catch (error) {
     if (token !== pointToken) return;
     setStatus(error.message, false);
@@ -513,22 +514,28 @@ function renderPlots() {
     color: COLORS[agent % COLORS.length],
     values: lastSweep[column].map((row) => row[agent]),
   }));
+  const priorRows = (lines) => [{ color: "#1f1c18", text: `π₁  ${format(marker)}` }].concat(
+    lines.map((entry) => ({ color: entry.color, text: `${entry.label}  ${format(sample(lastSweep.priors, entry.values, marker))}` })),
+  );
   draw(document.querySelector('[data-chart="investments"]'), {
-    x: lastSweep.priors, series: series("investments"), marker,
+    x: lastSweep.priors, series: series("investments"), marker, dragPrior: true,
     xlabel: "prior π₁", ylabel: "efficient investment", includeZero: true,
+    rows: priorRows(series("investments")),
   });
+  const costSeries = [{ label: "total cost", color: COLORS[0], values: lastSweep.cost }];
   draw(document.querySelector('[data-chart="cost"]'), {
-    x: lastSweep.priors,
-    series: [{ label: "total cost", color: COLORS[0], values: lastSweep.cost }],
-    marker, xlabel: "prior π₁", ylabel: "total cost", includeZero: true,
+    x: lastSweep.priors, series: costSeries, marker, dragPrior: true,
+    xlabel: "prior π₁", ylabel: "total cost", includeZero: true,
+    rows: priorRows(costSeries),
   });
   const exante = series("ex_ante");
   exante.forEach((line, agent) => { line.axis = agent === 0 ? "left" : "right"; });
   draw(document.querySelector('[data-chart="exante"]'), {
-    x: lastSweep.priors, series: exante, marker,
-    xlabel: "prior π₁",     ylabel: "φ*, agent 1",
+    x: lastSweep.priors, series: exante, marker, dragPrior: true,
+    xlabel: "prior π₁", ylabel: "φ*, agent 1",
     yRightLabel: n > 1 ? "φ*, other agents" : "",
     includeZero: true,
+    rows: priorRows(exante),
   });
   const same = lastSweep.detection_y.every((row) => row.every((value, i) => Math.abs(value - lastSweep.detection_y[0][i]) < 1e-6));
   const detection = same
@@ -536,8 +543,16 @@ function renderPlots() {
     : lastSweep.detection_y.map((values, agent) => ({
       label: `agent ${agent + 1}`, color: COLORS[agent % COLORS.length], values,
     }));
+  const guides = lastPoint && lastPoint.x.length === n
+    ? lastPoint.x.map((investment, agent) => ({
+      x: investment,
+      color: COLORS[agent % COLORS.length],
+      only: same ? "" : `agent ${agent + 1}`,
+      rows: [{ color: COLORS[agent % COLORS.length], text: `agent ${agent + 1}  ${format(lastPoint.detection[agent])}` }],
+    }))
+    : [];
   draw(document.querySelector('[data-chart="detection"]'), {
-    x: lastSweep.detection_x, series: detection,
+    x: lastSweep.detection_x, series: detection, guides,
     xlabel: "investment", ylabel: "detection probability", includeZero: true,
   });
 }
@@ -546,8 +561,7 @@ function draw(figure, spec) {
   const svg = figure.querySelector("svg");
   const width = Math.max(figure.clientWidth, 280);
   const height = 260;
-  const right = spec.yRightLabel ? 58 : 16;
-  const margin = { left: 58, right, top: 12, bottom: 36 };
+  const margin = { left: 58, right: 58, top: 12, bottom: 36 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const x0 = spec.x[0];
@@ -563,6 +577,7 @@ function draw(figure, spec) {
     scaleRight = (y) => margin.top + (1 - (y - rightDomain[0]) / (rightDomain[1] - rightDomain[0])) * plotHeight;
   }
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.style.cursor = spec.dragPrior ? "ew-resize" : "";
   svg.replaceChildren();
   ticks(y0, y1).forEach((tick) => {
     svg.appendChild(line(margin.left, scaleY(tick), margin.left + plotWidth, scaleY(tick), "#e4dccd"));
@@ -593,9 +608,41 @@ function draw(figure, spec) {
     path.setAttribute("stroke-width", "1.8");
     svg.appendChild(path);
   });
-  if (spec.marker !== undefined && spec.marker >= x0 && spec.marker <= x1) {
-    svg.appendChild(line(scaleX(spec.marker), margin.top, scaleX(spec.marker), margin.top + plotHeight, "#1f1c18", "4 3"));
-  }
+  const guides = spec.guides || (spec.marker === undefined ? [] : [{
+    x: spec.marker, color: "#1f1c18", rows: spec.rows || [],
+  }]);
+  guides.forEach((guide, index) => {
+    if (guide.x < x0 || guide.x > x1) return;
+    const x = scaleX(guide.x);
+    svg.appendChild(line(x, margin.top, x, margin.top + plotHeight, guide.color, "4 3"));
+    spec.series.forEach((entry) => {
+      if (guide.only && guide.only !== entry.label) return;
+      const scale = entry.axis === "right" ? scaleRight : scaleY;
+      const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      dot.setAttribute("cx", x);
+      dot.setAttribute("cy", scale(sample(spec.x, entry.values, guide.x)));
+      dot.setAttribute("r", "3.5");
+      dot.setAttribute("fill", entry.color);
+      dot.setAttribute("stroke", "#f7f4ee");
+      dot.setAttribute("stroke-width", "1.5");
+      svg.appendChild(dot);
+    });
+    if (guide.rows && guide.rows.length) {
+      const nearRight = x > margin.left + plotWidth * 0.62;
+      placeReadout(svg, x + (nearRight ? -8 : 8), margin.top + 16 + index * 16, nearRight ? "end" : "start", guide.rows);
+    }
+  });
+  figure._priorScale = spec.dragPrior ? {
+    left: margin.left,
+    top: margin.top,
+    width: plotWidth,
+    height: plotHeight,
+    invert(px) {
+      const t = (px - margin.left) / plotWidth;
+      return Math.min(x1, Math.max(x0, x0 + t * (x1 - x0)));
+    },
+  } : null;
+  bindPriorDrag(figure);
   const caption = figure.querySelector("figcaption");
   caption.replaceChildren();
   spec.series.forEach((entry) => {
@@ -605,6 +652,71 @@ function draw(figure, spec) {
     swatch.style.background = entry.color;
     item.append(swatch, document.createTextNode(entry.label));
     caption.appendChild(item);
+  });
+}
+
+function sample(xs, ys, x) {
+  if (x <= xs[0]) return ys[0];
+  if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
+  let hi = 1;
+  while (xs[hi] < x) hi += 1;
+  const t = (x - xs[hi - 1]) / (xs[hi] - xs[hi - 1]);
+  return ys[hi - 1] * (1 - t) + ys[hi] * t;
+}
+
+function placeReadout(svg, x, y, anchor, rows) {
+  const nodes = rows.map((row, index) => {
+    const node = label(x, y + index * 13, row.text, anchor);
+    node.setAttribute("fill", row.color);
+    node.setAttribute("font-size", "11");
+    svg.appendChild(node);
+    return node;
+  });
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  nodes.forEach((node) => {
+    const box = node.getBBox();
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  });
+  const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  background.setAttribute("x", minX - 4);
+  background.setAttribute("y", minY - 2);
+  background.setAttribute("width", maxX - minX + 8);
+  background.setAttribute("height", maxY - minY + 5);
+  background.setAttribute("rx", "3");
+  background.setAttribute("fill", "#f7f4ee");
+  background.setAttribute("opacity", "0.94");
+  svg.insertBefore(background, nodes[0]);
+}
+
+function svgPoint(svg, event) {
+  const point = svg.createSVGPoint();
+  point.x = event.clientX;
+  point.y = event.clientY;
+  return point.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function bindPriorDrag(figure) {
+  const svg = figure.querySelector("svg");
+  if (svg.dataset.drag) return;
+  svg.dataset.drag = "1";
+  svg.addEventListener("pointerdown", (event) => {
+    const scale = figure._priorScale;
+    if (!scale) return;
+    const local = svgPoint(svg, event);
+    if (local.x < scale.left || local.x > scale.left + scale.width) return;
+    if (local.y < scale.top || local.y > scale.top + scale.height) return;
+    setPrior(scale.invert(local.x));
+    try { svg.setPointerCapture(event.pointerId); } catch (error) { /* pointer already released */ }
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!svg.hasPointerCapture(event.pointerId) || !figure._priorScale) return;
+    setPrior(figure._priorScale.invert(svgPoint(svg, event).x));
   });
 }
 
@@ -661,13 +773,16 @@ document.querySelector("#same").addEventListener("click", () => {
   writeFunctions(values.map(() => values[0]));
   refreshAll();
 });
-function syncPi(fromSlider) {
-  const value = fromSlider ? Number(slider.value) : currentPi();
-  slider.value = value;
-  piInput.value = value.toFixed(3);
+function setPrior(value) {
+  const next = Math.min(1, Math.max(0.02, value));
+  slider.value = String(next);
+  piInput.value = next.toFixed(3);
   if (lastSweep && activeTab === "plots") renderPlots();
-  clearTimeout(syncPi.timer);
-  syncPi.timer = setTimeout(refreshPoint, 120);
+  clearTimeout(setPrior.timer);
+  setPrior.timer = setTimeout(refreshPoint, 80);
+}
+function syncPi(fromSlider) {
+  setPrior(fromSlider ? Number(slider.value) : currentPi());
 }
 slider.addEventListener("input", () => syncPi(true));
 piInput.addEventListener("input", () => syncPi(false));
