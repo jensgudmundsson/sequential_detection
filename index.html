@@ -47,10 +47,18 @@
   .caution {
     position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
     width: 1.05rem; height: 1.05rem; padding: 0; border: 0; border-radius: 50%;
-    background: #b42318; color: white; cursor: help;
+    background: #b42318; color: white; cursor: pointer;
     font: 700 0.72rem/1.05rem "Avenir Next", "Segoe UI", sans-serif;
   }
-  .caution[hidden] { display: none; }
+  .caution[hidden], .caution-note[hidden] { display: none; }
+  .caution-note {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 4;
+    width: max-content; max-width: 16rem; padding: 6px 8px;
+    background: white; color: #7a1a12; border: 1px solid #b42318; border-radius: 4px;
+    font: 13px/1.35 "Avenir Next", "Segoe UI", sans-serif;
+    box-shadow: 0 4px 14px rgba(31, 28, 24, 0.12);
+  }
+  #agents li:has(.caution-note:not([hidden])) { z-index: 3; }
   .idx { color: var(--muted); font-variant-numeric: tabular-nums; }
   input[type="text"], input[type="number"] {
     width: 100%;
@@ -218,8 +226,20 @@ function writeFunctions(values) {
     caution.textContent = "!";
     caution.hidden = true;
     caution.tabIndex = -1;
-    caution.title = "";
-    field.append(input, caution);
+    const popup = document.createElement("div");
+    popup.className = "caution-note";
+    popup.hidden = true;
+    caution.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const willOpen = popup.hidden && caution.dataset.note;
+      document.querySelectorAll(".caution-note").forEach((other) => { other.hidden = true; });
+      if (willOpen) {
+        popup.textContent = caution.dataset.note;
+        popup.hidden = false;
+      }
+    });
+    popup.addEventListener("click", (event) => event.stopPropagation());
+    field.append(input, caution, popup);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "remove";
@@ -256,7 +276,10 @@ function refreshCautions() {
       note = "";
     }
     mark.hidden = !note;
-    mark.title = note;
+    mark.dataset.note = note;
+    const popup = row.querySelector(".caution-note");
+    popup.textContent = note;
+    if (!note) popup.hidden = true;
     input.classList.toggle("has-caution", Boolean(note));
   });
 }
@@ -808,6 +831,9 @@ function label(x, y, text, anchor) {
   return node;
 }
 
+document.addEventListener("click", () => {
+  document.querySelectorAll(".caution-note").forEach((note) => { note.hidden = true; });
+});
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 });
