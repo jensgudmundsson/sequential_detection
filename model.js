@@ -112,6 +112,94 @@ function compileDetection(source, agent) {
   return p;
 }
 
+// Short caution when the expression, before clipping, misses the maintained
+// assumptions: p(0) = 0, values in [0, 1], strictly increasing, strictly
+// concave, and infinite slope at zero. Empty when it complies or cannot be read.
+function detectionCaution(source) {
+  let raw;
+  try {
+    raw = compileDetection(source, 1);
+  } catch (error) {
+    return "";
+  }
+  // compileDetection clips. Recover the shape from a dense sample of the
+  // clipped function, and also re-evaluate the source without the clip.
+  const unclipped = unclippedDetection(source);
+  if (!unclipped) return "";
+  const notes = [];
+  const origin = unclipped(0);
+  if (!Number.isFinite(origin) || Math.abs(origin) > 1e-6) notes.push("p(0) ≠ 0");
+  let outside = false;
+  let dropped = false;
+  let rose = false;
+  let plateau = false;
+  let previous = origin;
+  for (let k = 1; k <= 24; k += 1) {
+    const value = unclipped(k / 24);
+    if (!Number.isFinite(value) || value < -1e-6 || value > 1 + 1e-6) outside = true;
+    if (Number.isFinite(value) && Number.isFinite(previous)) {
+      if (value < previous - 1e-4) dropped = true;
+      else if (value > previous + 1e-4) rose = true;
+      else if (rose) plateau = true;
+    }
+    previous = value;
+  }
+  if (outside) notes.push("leaves [0, 1]");
+  if (dropped || plateau || !rose) notes.push("not strictly increasing");
+  const slopes = [];
+  for (let k = 1; k <= 12; k += 1) {
+    const slope = numericalSlope(unclipped, k / 12);
+    if (Number.isFinite(slope)) slopes.push(slope);
+  }
+  let slopeRose = false;
+  let slopeFell = false;
+  let slopeFlat = false;
+  for (let i = 1; i < slopes.length; i += 1) {
+    const tolerance = 1e-3 * Math.max(1, Math.abs(slopes[i - 1]));
+    if (slopes[i] > slopes[i - 1] + tolerance) slopeRose = true;
+    else if (slopes[i] < slopes[i - 1] - tolerance) slopeFell = true;
+    else if (Math.abs(slopes[i]) <= tolerance) slopeFlat = true;
+  }
+  if (slopeRose || slopeFlat || !slopeFell) notes.push("not strictly concave");
+  if (Number.isFinite(slopeNearZero(unclipped))) notes.push("finite slope at 0");
+  return notes.join("; ");
+}
+
+function unclippedDetection(source) {
+  const text = source.trim().replaceAll("^", "**");
+  if (!text) return null;
+  const hill = text.match(/^hill\(\s*([^,]+)\s*,\s*([^)]+?)\s*\)$/i);
+  if (hill) {
+    const exponent = evalNumber(hill[1]);
+    const half = evalNumber(hill[2]);
+    if (exponent <= 0 || half <= 0) return null;
+    return hillDetection(exponent, half);
+  }
+  let raw;
+  try {
+    raw = Function("x", "exp", "log", "sqrt", "sin", "cos", "abs", "min", "pi", "E", `"use strict"; return (${text});`);
+  } catch (error) {
+    return null;
+  }
+  const call = (x) => raw(x, Math.exp, Math.log, Math.sqrt, Math.sin, Math.cos, Math.abs, Math.min, Math.PI, Math.E);
+  return (x) => {
+    let value = call(x);
+    if (typeof value === "function") value = value(x);
+    return value;
+  };
+}
+
+function slopeNearZero(p) {
+  const widths = [1e-2, 1e-4, 1e-6];
+  const slopes = widths.map((width) => {
+    const rise = p(width) - p(0);
+    return Number.isFinite(rise) ? rise / width : Infinity;
+  });
+  if (slopes.some((slope) => !Number.isFinite(slope))) return Infinity;
+  if (slopes[2] > slopes[1] * 1.05 && slopes[1] > slopes[0] * 1.05) return Infinity;
+  return slopes[2];
+}
+
 // True when the detection slope is decreasing, so the partial cost has one root.
 function slopeFalls(detection) {
   let previous = Infinity;
@@ -404,6 +492,6 @@ function solveSweep(sources) {
   };
 }
 
-const api = { solvePoint, solveSweep, phiDesigned };
+const api = { solvePoint, solveSweep, phiDesigned, detectionCaution };
 if (typeof window !== "undefined") window.Sequencing = api;
 if (typeof module !== "undefined" && module.exports) module.exports = api;

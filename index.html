@@ -42,6 +42,15 @@
   .note, .hint { margin: 0; color: var(--muted); font-size: calc(0.82rem + 1px); line-height: 1.4; }
   #agents { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   #agents li { display: grid; grid-template-columns: 1.4rem 1fr 1.6rem; gap: 6px; align-items: center; }
+  .field { position: relative; }
+  .field input.has-caution { padding-right: 1.7rem; }
+  .caution {
+    position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+    width: 1.05rem; height: 1.05rem; padding: 0; border: 0; border-radius: 50%;
+    background: #b42318; color: white; cursor: help;
+    font: 700 0.72rem/1.05rem "Avenir Next", "Segoe UI", sans-serif;
+  }
+  .caution[hidden] { display: none; }
   .idx { color: var(--muted); font-variant-numeric: tabular-nums; }
   input[type="text"], input[type="number"] {
     width: 100%;
@@ -163,7 +172,7 @@
     </div>
   </section>
 </main>
-<script src="model.js?v=2"></script>
+<script src="model.js?v=3"></script>
 <script>
 const COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"];
 const DEFAULTS = ["Hill(0.95, 0.004)", "Hill(0.92, 0.1175)", "Hill(0.5, 1)"];
@@ -201,6 +210,16 @@ function writeFunctions(values) {
     input.value = value;
     input.placeholder = "Hill(0.5, 1)";
     input.addEventListener("input", scheduleFunctions);
+    const field = document.createElement("div");
+    field.className = "field";
+    const caution = document.createElement("button");
+    caution.type = "button";
+    caution.className = "caution";
+    caution.textContent = "!";
+    caution.hidden = true;
+    caution.tabIndex = -1;
+    caution.title = "";
+    field.append(input, caution);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "remove";
@@ -212,7 +231,7 @@ function writeFunctions(values) {
       writeFunctions(next);
       refreshAll();
     });
-    row.append(label, input, remove);
+    row.append(label, field, remove);
     agents.appendChild(row);
   });
 }
@@ -226,12 +245,29 @@ function setStatus(text, quiet) {
   status.classList.toggle("quiet", Boolean(quiet));
 }
 
+function refreshCautions() {
+  agents.querySelectorAll("li").forEach((row) => {
+    const input = row.querySelector("input");
+    const mark = row.querySelector(".caution");
+    let note = "";
+    try {
+      note = Sequencing.detectionCaution(input.value);
+    } catch (error) {
+      note = "";
+    }
+    mark.hidden = !note;
+    mark.title = note;
+    input.classList.toggle("has-caution", Boolean(note));
+  });
+}
+
 function scheduleFunctions() {
   clearTimeout(scheduleFunctions.timer);
   scheduleFunctions.timer = setTimeout(refreshAll, 350);
 }
 
 function refreshPoint() {
+  refreshCautions();
   const token = ++pointToken;
   const body = payload();
   setStatus("Solving…", true);
@@ -249,6 +285,7 @@ function refreshPoint() {
 }
 
 function refreshAll() {
+  refreshCautions();
   refreshPoint();
   const token = ++sweepToken;
   const functions = readFunctions();
