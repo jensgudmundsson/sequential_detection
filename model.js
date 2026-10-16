@@ -89,9 +89,10 @@ function compileDetection(source, agent) {
   }
   const call = (x) => raw(x, Math.exp, Math.log, Math.sqrt, Math.sin, Math.cos, Math.abs, Math.min, Math.PI, Math.E);
   function p(x) {
-    const value = call(x);
-    if (typeof value === "function") return value(x);
-    return value;
+    let value = call(x);
+    if (typeof value === "function") value = value(x);
+    if (!Number.isFinite(value)) return value;
+    return Math.min(1, Math.max(0, value));
   }
   p.derivative = (x) => numericalSlope(p, x);
   for (const point of [0, 0.5, 1]) {
