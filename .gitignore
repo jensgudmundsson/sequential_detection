@@ -5,7 +5,5 @@
 !.github/workflows/
 !.github/workflows/pages.yml
 !README.md
-!ui/
-!ui/**
-ui/__pycache__/
-*.pyc
+!index.html
+!model.js
