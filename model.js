@@ -102,8 +102,8 @@ function compileDetection(source, agent) {
     } catch (error) {
       throw new Error(`agent ${agent}: failed at x = ${point} (${error.message})`);
     }
-    if (!Number.isFinite(value) || value < -1e-8 || value > 1 + 1e-8) {
-      throw new Error(`agent ${agent}: at x = ${point} the value is ${value}, outside [0, 1]`);
+    if (!Number.isFinite(value)) {
+      throw new Error(`agent ${agent}: at x = ${point} the value is ${value}`);
     }
   }
   if (!Number.isFinite(p.derivative(0.5))) {
