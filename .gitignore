@@ -1,0 +1,9 @@
+# The working folder also holds other drafts. This repository tracks the page.
+*
+!.gitignore
+!.github/
+!.github/workflows/
+!.github/workflows/pages.yml
+!README.md
+!ui/
+!ui/**

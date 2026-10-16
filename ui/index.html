@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Efficient sequencing</title>
+<style>
+  :root {
+    --bg: #efeae2;
+    --panel: #f7f4ee;
+    --ink: #1f1c18;
+    --muted: #6f675d;
+    --line: #ddd4c6;
+    --accent: #1e4638;
+    --warn: #8a3b12;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    color: var(--ink);
+    background: var(--bg);
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    font-size: 16px;
+  }
+  aside {
+    padding: 22px 20px 28px;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  h1 {
+    margin: 0;
+    font-size: calc(1.25rem + 1px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .note, .hint { margin: 0; color: var(--muted); font-size: calc(0.82rem + 1px); line-height: 1.4; }
+  #agents { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #agents li { display: grid; grid-template-columns: 1.4rem 1fr 1.6rem; gap: 6px; align-items: center; }
+  .idx { color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: white;
+    color: var(--ink);
+    border-radius: 4px;
+    padding: 7px 8px;
+    font: 14px ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .remove {
+    border: 0; background: transparent; color: var(--muted); font-size: calc(1.1rem + 1px); padding: 0;
+  }
+  .remove:disabled { visibility: hidden; }
+  .actions { display: flex; gap: 8px; }
+  .add, .same {
+    border-radius: 4px;
+    padding: 6px 10px;
+  }
+  .add {
+    flex: 1;
+    border: 1px dashed #b7ad9e;
+    background: transparent;
+    font-size: calc(1.15rem + 1px);
+    line-height: 1;
+  }
+  .same { border: 1px solid var(--line); background: white; font-size: calc(0.86rem + 1px); }
+  .add:hover, .same:hover { border-color: var(--accent); }
+  .prior { display: grid; grid-template-columns: auto 1fr 4.6rem; gap: 10px; align-items: center; }
+  .prior span { font-family: "Times New Roman", Times, serif; font-style: italic; font-size: calc(1.15rem + 1px); }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  main { padding: 18px 26px 36px; min-width: 0; }
+  .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .tabs button {
+    border: 0; background: transparent; padding: 8px 0 10px;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  #status { min-height: 1.2em; margin: 0 0 12px; color: var(--warn); font-size: calc(0.88rem + 1px); }
+  #status.quiet { color: var(--muted); }
+  .summary { display: flex; gap: 28px; margin: 0 0 14px; }
+  .summary b { display: block; font-size: calc(1.25rem + 1px); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .summary span { color: var(--muted); font-size: calc(0.8rem + 1px); }
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; text-align: right; vertical-align: middle; }
+  th { font-weight: 500; color: var(--muted); font-size: calc(0.78rem + 1px); }
+  td.agent, th.agent { text-align: left; }
+  .matrices { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+  .matrices h2, #matrices > div > h2 { margin: 0 0 8px; font-size: calc(1.05rem + 1px); font-weight: 600; }
+  #matrices > div > h2 { margin-top: 18px; }
+  .matrix, .costs { table-layout: fixed; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .matrix td, .matrix th, .costs td, .costs th { width: 9ch; height: 2.4rem; padding: 4px 0; text-align: center; font-size: 13px; overflow: hidden; }
+  .costs { margin-top: 4px; }
+  .costs th:first-child, .costs td:first-child { width: 7ch; }
+  .matrix th:first-child { width: 4ch; }
+  .matrix td.sum { border-top: 1px solid var(--line); color: var(--muted); background: transparent !important; }
+  .matrix td.entry { overflow: visible; }
+  .matrix input {
+    display: inline-block; width: calc(100% - 8px); height: 1.35rem;
+    border: 1px solid rgba(31, 28, 24, 0.35); border-radius: 3px;
+    background: white; color: var(--ink);
+    text-align: center; font: inherit; padding: 0;
+  }
+  .matrix input:focus { outline: 2px solid var(--accent); background: white; color: var(--ink); }
+  .matrix-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 8px; }
+  .matrix-title h2 { margin: 0; }
+  .reset { border: 0; background: transparent; color: var(--muted); font-size: calc(0.78rem + 1px); padding: 0; }
+  .plots { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 26px; }
+  figure { margin: 0; min-width: 0; }
+  figure h2 { margin: 0 0 4px; font-size: calc(1.05rem + 1px); font-weight: 600; }
+  svg { width: 100%; height: 260px; display: block; overflow: visible; }
+  figcaption { display: flex; flex-wrap: wrap; gap: 8px 14px; min-height: 1.2em; margin-top: 4px; font-size: calc(0.78rem + 1px); color: var(--muted); }
+  .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+  @media (max-width: 980px) {
+    body { grid-template-columns: 1fr; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    .plots { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <div>
+    <h1>Sequential detection</h1>
+  </div>
+  <ol id="agents"></ol>
+  <div class="actions">
+    <button class="add" id="add" type="button" title="Add an agent">+</button>
+    <button class="same" id="same" type="button">All the same</button>
+  </div>
+  <p class="hint">Hill(a, K) is x^a / (K^a + x^a), where a < 1 gives infinite slope at zero.
+    You can also enter an expression in x, such as 1 - exp(-x) or 2*x - x**2.
+    Powers are ** or ^.</p>
+  <label class="prior">
+    <span>π₁</span>
+    <input id="slider" type="range" min="0.02" max="1" step="0.001" value="0.5">
+    <input id="pi" type="number" min="0.02" max="1" step="0.001" value="0.50">
+  </label>
+</aside>
+<main>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="efficient" aria-selected="true">Efficient</button>
+    <button type="button" role="tab" data-tab="matrices">Matrices</button>
+    <button type="button" role="tab" data-tab="plots">Plots</button>
+  </div>
+  <p id="status"></p>
+  <section id="efficient"></section>
+  <section id="matrices" hidden></section>
+  <section id="plots" hidden>
+    <div class="plots">
+      <figure data-chart="investments"><h2>Efficient investment vs prior</h2><svg></svg><figcaption></figcaption></figure>
+      <figure data-chart="cost"><h2>Total cost vs prior</h2><svg></svg><figcaption></figcaption></figure>
+      <figure data-chart="exante"><h2>Ex ante cost under φ* vs prior</h2><svg></svg><figcaption></figcaption></figure>
+      <figure data-chart="detection"><h2>Detection probability vs investment</h2><svg></svg><figcaption></figcaption></figure>
+    </div>
+  </section>
+</main>
+<script src="model.js"></script>
+<script>
+const COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"];
+const DEFAULTS = ["Hill(0.95, 0.004)", "Hill(0.92, 0.1175)", "Hill(0.5, 1)"];
+
+const agents = document.querySelector("#agents");
+const slider = document.querySelector("#slider");
+const piInput = document.querySelector("#pi");
+const status = document.querySelector("#status");
+let pointToken = 0;
+let sweepToken = 0;
+let lastPoint = null;
+let lastSweep = null;
+let activeTab = "efficient";
+let designedU = null;
+
+function currentPi() {
+  return Math.min(1, Math.max(0.02, Number(piInput.value) || 0.5));
+}
+
+function readFunctions() {
+  return [...agents.querySelectorAll("input")].map((input) => input.value);
+}
+
+function writeFunctions(values) {
+  agents.replaceChildren();
+  values.forEach((value, index) => {
+    const row = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "idx";
+    label.textContent = String(index + 1);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.value = value;
+    input.placeholder = "Hill(0.5, 1)";
+    input.addEventListener("input", scheduleFunctions);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove";
+    remove.textContent = "×";
+    remove.disabled = values.length === 1;
+    remove.addEventListener("click", () => {
+      const next = readFunctions();
+      next.splice(index, 1);
+      writeFunctions(next);
+      refreshAll();
+    });
+    row.append(label, input, remove);
+    agents.appendChild(row);
+  });
+}
+
+function payload() {
+  return { pi: currentPi(), functions: readFunctions() };
+}
+
+function setStatus(text, quiet) {
+  status.textContent = text || "";
+  status.classList.toggle("quiet", Boolean(quiet));
+}
+
+function scheduleFunctions() {
+  clearTimeout(scheduleFunctions.timer);
+  scheduleFunctions.timer = setTimeout(refreshAll, 350);
+}
+
+function refreshPoint() {
+  const token = ++pointToken;
+  const body = payload();
+  setStatus("Solving…", true);
+  try {
+    const data = Sequencing.solvePoint(body.pi, body.functions);
+    if (token !== pointToken) return;
+    lastPoint = data;
+    setStatus(data.warning || "", false);
+    renderPoint(data);
+  } catch (error) {
+    if (token !== pointToken) return;
+    setStatus(error.message, false);
+  }
+}
+
+function refreshAll() {
+  refreshPoint();
+  const token = ++sweepToken;
+  const functions = readFunctions();
+  try {
+    lastSweep = Sequencing.solveSweep(functions);
+    if (token !== sweepToken) return;
+    if (activeTab === "plots") renderPlots();
+    if (!status.textContent || status.classList.contains("quiet")) setStatus(lastPoint && lastPoint.warning || "", false);
+  } catch (error) {
+    if (token !== sweepToken) return;
+    setStatus(error.message, false);
+  }
+}
+
+function format(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs < 1e-10) return "0.000";
+  if (abs >= 0.001) return value.toFixed(3);
+  if (abs >= 1e-4) return value.toFixed(5);
+  return value.toExponential(1);
+}
+
+function formatMatrix(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const shown = Math.abs(value) < 0.0005 ? 0 : value;
+  return (shown < 0 ? "-" : " ") + Math.abs(shown).toFixed(3);
+}
+
+function renderPoint(data) {
+  const efficient = document.querySelector("#efficient");
+  efficient.replaceChildren();
+  const summary = document.createElement("div");
+  summary.className = "summary";
+  summary.append(stat("Total cost", data.cost));
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  ["agent", "investment", "detection", "continuation loss", "belief"].forEach((name, index) => {
+    const cell = document.createElement("th");
+    cell.textContent = name;
+    if (index === 0) cell.className = "agent";
+    head.appendChild(cell);
+  });
+  table.appendChild(head);
+  data.x.forEach((investment, index) => {
+    const row = document.createElement("tr");
+    const agent = document.createElement("td");
+    agent.className = "agent";
+    agent.textContent = String(index + 1);
+    agent.style.color = COLORS[index % COLORS.length];
+    row.appendChild(agent);
+    [investment, data.detection[index], data.L[index], data.belief[index]].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = format(value);
+      row.appendChild(cell);
+    });
+    table.appendChild(row);
+  });
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = `At π₁ = ${data.pi.toFixed(3)}. Total cost is the expected loss plus investments at the efficient profile. Investment is agent i's efficient effort. Detection is i's probability of finding the hazard given that it is present. Continuation loss is the expected cost after i fails when the hazard is present. Belief is i's probability that the hazard is present when i acts.`;
+  efficient.append(summary, table, hint);
+  renderMatrices(data);
+}
+
+function stat(label, value) {
+  const block = document.createElement("div");
+  const number = document.createElement("b");
+  number.textContent = format(value);
+  const caption = document.createElement("span");
+  caption.textContent = label;
+  block.append(number, caption);
+  return block;
+}
+
+function coolwarm(value, limit) {
+  const t = limit === 0 ? 0 : Math.max(-1, Math.min(1, value / limit));
+  const toward = t < 0 ? [59, 76, 192] : [180, 4, 38];
+  const mix = Math.abs(t);
+  const rgb = toward.map((channel) => Math.round(channel * mix + 247 * (1 - mix)));
+  return `rgb(${rgb.join(",")})`;
+}
+
+function equalSplit(n) {
+  return Array.from({ length: n }, () => 1 / n);
+}
+
+function designedColumn(data) {
+  const n = data.L.length;
+  if (!designedU || designedU.length !== n) designedU = equalSplit(n);
+  return designedU;
+}
+
+function renderMatrices(data) {
+  const root = document.querySelector("#matrices");
+  root.replaceChildren();
+  const wrap = document.createElement("div");
+  wrap.className = "matrices";
+  const designed = Sequencing.phiDesigned(data.L, designedColumn(data));
+  const limit = Math.max(
+    ...data.phi_star.flat().map(Math.abs),
+    ...data.phi_F.flat().map(Math.abs),
+    ...designed.flat().map(Math.abs),
+  );
+  wrap.append(
+    matrixBlock("φ*", data.phi_star, limit),
+    matrixBlock("φᶠ", data.phi_F, limit),
+    designedBlock(data, designed, limit),
+  );
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = `At π₁ = ${data.pi.toFixed(3)}. Rows are agents. A numbered column is detection by that agent, and U is the hazard going undetected. φᵈ is set by its undetected column. The other entries are then the first-best completion: an agent who has failed pays the same whoever detects later, and an agent who has not yet acted pays the same whoever detected.`;
+  root.append(wrap, exAnteTable(data, designed), hint);
+}
+
+function exAnteTable(data, designed) {
+  const starU = data.phi_star.map((row) => row[row.length - 1]);
+  const designedUColumn = designed.map((row) => row[row.length - 1]);
+  const designedCosts = data.ex_ante.map((cost, agent) => cost + data.pi * (designedUColumn[agent] - starU[agent]));
+  const costLimit = Math.max(...data.ex_ante.map(Math.abs), Math.abs(data.fair_share), ...designedCosts.map(Math.abs));
+  const block = document.createElement("div");
+  const heading = document.createElement("h2");
+  heading.textContent = "Ex ante cost";
+  const table = document.createElement("table");
+  table.className = "costs";
+  const head = document.createElement("tr");
+  ["agent", "φ*", "φᶠ", "φᵈ"].forEach((name) => {
+    const cell = document.createElement("th");
+    cell.textContent = name;
+    head.appendChild(cell);
+  });
+  table.appendChild(head);
+  data.ex_ante.forEach((cost, agent) => {
+    const row = document.createElement("tr");
+    const label = document.createElement("td");
+    label.textContent = String(agent + 1);
+    label.style.color = COLORS[agent % COLORS.length];
+    row.appendChild(label);
+    [cost, data.fair_share, designedCosts[agent]].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = formatMatrix(value);
+      cell.style.background = coolwarm(value, costLimit);
+      cell.style.color = Math.abs(value) > 0.55 * costLimit ? "white" : "var(--ink)";
+      row.appendChild(cell);
+    });
+    table.appendChild(row);
+  });
+  block.append(heading, table);
+  return block;
+}
+
+function designedBlock(data, matrix, limit) {
+  const block = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "matrix-title";
+  const heading = document.createElement("h2");
+  heading.textContent = "φᵈ";
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "reset";
+  reset.textContent = "Equal split";
+  reset.addEventListener("click", () => {
+    designedU = null;
+    if (lastPoint) renderMatrices(lastPoint);
+  });
+  title.append(heading, reset);
+  block.append(title, matrixTable(matrix, limit, data));
+  return block;
+}
+
+function setDesignedEntry(data, agent, value, typed) {
+  const column = designedColumn(data).slice();
+  if (column.length < 2) return;
+  column[agent] = value;
+  const residual = agent === column.length - 1 ? 0 : column.length - 1;
+  const others = column.reduce((sum, entry, index) => (index === residual ? sum : sum + entry), 0);
+  column[residual] = 1 - others;
+  designedU = column;
+  if (!lastPoint) return;
+  renderMatrices(lastPoint);
+  const field = document.querySelectorAll("#matrices input")[agent];
+  if (!field) return;
+  field.value = typed;
+  field.focus();
+  field.setSelectionRange(typed.length, typed.length);
+}
+
+function matrixBlock(title, matrix, limit) {
+  const block = document.createElement("div");
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  block.append(heading, matrixTable(matrix, limit));
+  return block;
+}
+
+function matrixTable(matrix, limit, data) {
+  const table = document.createElement("table");
+  table.className = "matrix";
+  const head = document.createElement("tr");
+  head.appendChild(document.createElement("th"));
+  const n = matrix.length;
+  for (let column = 0; column < n; column += 1) head.appendChild(Object.assign(document.createElement("th"), { textContent: String(column + 1) }));
+  head.appendChild(Object.assign(document.createElement("th"), { textContent: "U" }));
+  table.appendChild(head);
+  const sums = Array(n + 1).fill(0);
+  matrix.forEach((row, agent) => {
+    const tr = document.createElement("tr");
+    const label = document.createElement("th");
+    label.textContent = String(agent + 1);
+    tr.appendChild(label);
+    row.forEach((value, column) => {
+      sums[column] += value;
+      const cell = document.createElement("td");
+      const ink = Math.abs(value) > 0.55 * limit ? "white" : "var(--ink)";
+      cell.style.background = coolwarm(value, limit);
+      cell.style.color = ink;
+      if (data && column === n && n > 1) {
+        cell.classList.add("entry");
+        const input = document.createElement("input");
+        input.inputMode = "decimal";
+        input.value = formatMatrix(value);
+        input.setAttribute("aria-label", `undetected liability of agent ${agent + 1}`);
+        input.addEventListener("input", () => {
+          const text = input.value.trim();
+          if (!/\d/.test(text) || !Number.isFinite(Number(text))) return;
+          setDesignedEntry(data, agent, Number(text), input.value);
+        });
+        cell.appendChild(input);
+      } else {
+        cell.textContent = formatMatrix(value);
+      }
+      tr.appendChild(cell);
+    });
+    table.appendChild(tr);
+  });
+  const sumRow = document.createElement("tr");
+  sumRow.appendChild(Object.assign(document.createElement("th"), { textContent: "sum" }));
+  sums.forEach((value) => {
+    const cell = document.createElement("td");
+    cell.className = "sum";
+    cell.textContent = formatMatrix(value);
+    sumRow.appendChild(cell);
+  });
+  table.appendChild(sumRow);
+  return table;
+}
+
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll(".tabs button").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.tab === name));
+  });
+  ["efficient", "matrices", "plots"].forEach((id) => {
+    document.getElementById(id).hidden = id !== name;
+  });
+  if (name === "plots") renderPlots();
+}
+
+function renderPlots() {
+  if (!lastSweep) return;
+  const marker = currentPi();
+  const n = lastSweep.investments[0].length;
+  const series = (column) => Array.from({ length: n }, (_, agent) => ({
+    label: `agent ${agent + 1}`,
+    color: COLORS[agent % COLORS.length],
+    values: lastSweep[column].map((row) => row[agent]),
+  }));
+  draw(document.querySelector('[data-chart="investments"]'), {
+    x: lastSweep.priors, series: series("investments"), marker,
+    xlabel: "prior π₁", ylabel: "efficient investment", includeZero: true,
+  });
+  draw(document.querySelector('[data-chart="cost"]'), {
+    x: lastSweep.priors,
+    series: [{ label: "total cost", color: COLORS[0], values: lastSweep.cost }],
+    marker, xlabel: "prior π₁", ylabel: "total cost", includeZero: true,
+  });
+  const exante = series("ex_ante");
+  exante.forEach((line, agent) => { line.axis = agent === 0 ? "left" : "right"; });
+  draw(document.querySelector('[data-chart="exante"]'), {
+    x: lastSweep.priors, series: exante, marker,
+    xlabel: "prior π₁",     ylabel: "φ*, agent 1",
+    yRightLabel: n > 1 ? "φ*, other agents" : "",
+    includeZero: true,
+  });
+  const same = lastSweep.detection_y.every((row) => row.every((value, i) => Math.abs(value - lastSweep.detection_y[0][i]) < 1e-6));
+  const detection = same
+    ? [{ label: "all agents", color: COLORS[0], values: lastSweep.detection_y[0] }]
+    : lastSweep.detection_y.map((values, agent) => ({
+      label: `agent ${agent + 1}`, color: COLORS[agent % COLORS.length], values,
+    }));
+  draw(document.querySelector('[data-chart="detection"]'), {
+    x: lastSweep.detection_x, series: detection,
+    xlabel: "investment", ylabel: "detection probability", includeZero: true,
+  });
+}
+
+function draw(figure, spec) {
+  const svg = figure.querySelector("svg");
+  const width = Math.max(figure.clientWidth, 280);
+  const height = 260;
+  const right = spec.yRightLabel ? 58 : 16;
+  const margin = { left: 58, right, top: 12, bottom: 36 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const x0 = spec.x[0];
+  const x1 = spec.x[spec.x.length - 1];
+  const scaleX = (x) => margin.left + ((x - x0) / (x1 - x0)) * plotWidth;
+  const yValues = (axis) => spec.series.filter((line) => (line.axis || "left") === axis).flatMap((line) => line.values);
+  const [y0, y1] = padded(yValues("left"), spec.includeZero);
+  const scaleY = (y) => margin.top + (1 - (y - y0) / (y1 - y0)) * plotHeight;
+  let scaleRight = null;
+  let rightDomain = null;
+  if (spec.yRightLabel) {
+    rightDomain = padded(yValues("right"), spec.includeZero);
+    scaleRight = (y) => margin.top + (1 - (y - rightDomain[0]) / (rightDomain[1] - rightDomain[0])) * plotHeight;
+  }
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  ticks(y0, y1).forEach((tick) => {
+    svg.appendChild(line(margin.left, scaleY(tick), margin.left + plotWidth, scaleY(tick), "#e4dccd"));
+    svg.appendChild(label(margin.left - 8, scaleY(tick) + 4, format(tick), "end"));
+  });
+  ticks(x0, x1, 5).forEach((tick) => {
+    svg.appendChild(label(scaleX(tick), height - 16, format(tick), "middle"));
+  });
+  svg.appendChild(label(margin.left + plotWidth / 2, height - 2, spec.xlabel, "middle"));
+  const yTitle = label(16, margin.top + plotHeight / 2, spec.ylabel, "middle");
+  yTitle.setAttribute("transform", `rotate(-90 16 ${margin.top + plotHeight / 2})`);
+  svg.appendChild(yTitle);
+  if (scaleRight) {
+    ticks(rightDomain[0], rightDomain[1]).forEach((tick) => {
+      svg.appendChild(label(margin.left + plotWidth + 8, scaleRight(tick) + 4, format(tick), "start"));
+    });
+    const rightTitle = label(width - 8, margin.top + plotHeight / 2, spec.yRightLabel, "middle");
+    rightTitle.setAttribute("transform", `rotate(90 ${width - 8} ${margin.top + plotHeight / 2})`);
+    svg.appendChild(rightTitle);
+  }
+  spec.series.forEach((entry) => {
+    const scale = entry.axis === "right" ? scaleRight : scaleY;
+    const points = entry.values.map((value, index) => `${scaleX(spec.x[index])},${scale(value)}`).join(" ");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    path.setAttribute("points", points);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", entry.color);
+    path.setAttribute("stroke-width", "1.8");
+    svg.appendChild(path);
+  });
+  if (spec.marker !== undefined && spec.marker >= x0 && spec.marker <= x1) {
+    svg.appendChild(line(scaleX(spec.marker), margin.top, scaleX(spec.marker), margin.top + plotHeight, "#1f1c18", "4 3"));
+  }
+  const caption = figure.querySelector("figcaption");
+  caption.replaceChildren();
+  spec.series.forEach((entry) => {
+    const item = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = entry.color;
+    item.append(swatch, document.createTextNode(entry.label));
+    caption.appendChild(item);
+  });
+}
+
+function padded(values, includeZero) {
+  let lo = Math.min(...values);
+  let hi = Math.max(...values);
+  if (includeZero) lo = Math.min(0, lo);
+  if (hi <= lo) hi = lo + 1;
+  if (lo >= 0 && hi <= 1 && hi >= 0.95) return [0, 1];
+  return [lo, hi + (hi - lo) * 0.08];
+}
+
+function ticks(lo, hi, count = 4) {
+  const step = (hi - lo) / count;
+  return Array.from({ length: count + 1 }, (_, i) => lo + step * i);
+}
+
+function line(x1, y1, x2, y2, color, dash) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  node.setAttribute("x1", x1);
+  node.setAttribute("y1", y1);
+  node.setAttribute("x2", x2);
+  node.setAttribute("y2", y2);
+  node.setAttribute("stroke", color);
+  if (dash) node.setAttribute("stroke-dasharray", dash);
+  return node;
+}
+
+function label(x, y, text, anchor) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  node.setAttribute("x", x);
+  node.setAttribute("y", y);
+  node.setAttribute("text-anchor", anchor);
+  node.setAttribute("fill", "#6f675d");
+  node.setAttribute("font-size", "12");
+  node.setAttribute("font-family", "Avenir Next, Segoe UI, sans-serif");
+  node.textContent = text;
+  return node;
+}
+
+document.querySelectorAll(".tabs button").forEach((button) => {
+  button.addEventListener("click", () => showTab(button.dataset.tab));
+});
+document.querySelector("#add").addEventListener("click", () => {
+  const values = readFunctions();
+  if (values.length >= 8) return;
+  values.push(values.length ? values[values.length - 1] : "Hill(0.5, 1)");
+  writeFunctions(values);
+  agents.querySelector("li:last-child input").focus();
+  refreshAll();
+});
+document.querySelector("#same").addEventListener("click", () => {
+  const values = readFunctions();
+  writeFunctions(values.map(() => values[0]));
+  refreshAll();
+});
+function syncPi(fromSlider) {
+  const value = fromSlider ? Number(slider.value) : currentPi();
+  slider.value = value;
+  piInput.value = value.toFixed(3);
+  if (lastSweep && activeTab === "plots") renderPlots();
+  clearTimeout(syncPi.timer);
+  syncPi.timer = setTimeout(refreshPoint, 120);
+}
+slider.addEventListener("input", () => syncPi(true));
+piInput.addEventListener("input", () => syncPi(false));
+window.addEventListener("resize", () => { if (activeTab === "plots") renderPlots(); });
+
+writeFunctions(DEFAULTS);
+refreshAll();
+</script>
+</body>
+</html>
